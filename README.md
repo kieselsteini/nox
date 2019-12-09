@@ -44,6 +44,20 @@ Called when a button on a game controller was released.
 #### nox.events.on_controller_moved(id, axis, value)
 Called when a stick on a game controller was moved.
 
+### nox.system
+
+#### nox.system.get_base_path()
+Return the base path of the main executable.
+```lua
+local path = nox.system.get_base_path()
+```
+
+#### nox.system.get_pref_path(org, app)
+Return the preferences path. This might be the only path you can write to.
+```lua
+local path = nox.system.get_pref_path('MyCorp', 'MyGame')
+```
+
 ### nox.video
 
 #### nox.video.get_blend_mode

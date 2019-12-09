@@ -62,6 +62,14 @@
 #define WINDOW_PADDING		64
 
 
+/*----------------------------------------------------------------------------*/
+typedef struct image_t {
+	struct image_t			*root;
+	SDL_Texture 			*texture;
+	SDL_Rect				rect;
+} image_t;
+
+
 /*
 ================================================================================
 
@@ -78,6 +86,8 @@ static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
 static SDL_Color draw_color = { 255, 255, 255, 255 };
 static SDL_BlendMode blend_mode = SDL_BLENDMODE_BLEND;
+static SDL_Texture *render_target = NULL;
+static int render_target_ref = LUA_NOREF;
 
 
 /*
@@ -118,6 +128,64 @@ static int push_callback(lua_State *L, const char *name) {
 	}
 	lua_remove(L, -2);
 	return -1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static void *push_object(lua_State *L, const char *name, size_t length) {
+	void *data = lua_newuserdata(L, length);
+	luaL_setmetatable(L, name);
+	SDL_memset(data, 0, length);
+	return data;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static void register_metatable(lua_State *L, const char *name, const luaL_Reg funcs[]) {
+	luaL_newmetatable(L, name);
+	lua_pushvalue(L, -1);
+	lua_setfield(L, -2, "__index");
+	luaL_setfuncs(L, funcs, 0);
+	lua_pop(L, 1);
+}
+
+
+/*----------------------------------------------------------------------------*/
+static SDL_RWops *check_binary(lua_State *L, int idx) {
+	size_t length;
+	const char *data = luaL_checklstring(L, idx, &length);
+	SDL_RWops *rw = SDL_RWFromConstMem(data, length);
+	if (rw == NULL)
+		luaL_error(L, "SDL_RWFromConstMem() failed: %s", SDL_GetError());
+	return rw;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static image_t *check_image(lua_State *L, int idx) {
+	image_t *self = luaL_checkudata(L, idx, "nox_image");
+	luaL_argcheck(L, self->root->texture != NULL, idx, "attempt to operate on destroyed image");
+	return self;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static void reset_render_target(lua_State *L) {
+	luaL_unref(L, LUA_REGISTRYINDEX, render_target_ref);
+	if (SDL_SetRenderTarget(renderer, NULL))
+		luaL_error(L, "SDL_SetRenderTarget(NULL) failed: %s", SDL_GetError());
+
+	render_target = NULL;
+	render_target_ref = LUA_NOREF;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static void set_draw_parameters(lua_State *L) {
+	if (SDL_SetRenderDrawColor(renderer, draw_color.r, draw_color.g, draw_color.b, draw_color.a))
+		luaL_error(L, "SDL_SetRenderDrawColor() failed: %s", SDL_GetError());
+	if (SDL_SetRenderDrawBlendMode(renderer, blend_mode))
+		luaL_error(L, "SDL_SetRenderDrawBlendMode() failed: %s", SDL_GetError());
 }
 
 
@@ -226,17 +294,217 @@ static int f_nox_video_set_draw_color(lua_State *L) {
 
 
 /*----------------------------------------------------------------------------*/
+static int f_nox_video_get_render_target(lua_State *L) {
+	lua_rawgeti(L, LUA_REGISTRYINDEX, render_target_ref);
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_video_set_render_target(lua_State *L) {
+	if (lua_isnil(L, 1)) {
+		reset_render_target(L);
+	} else {
+		image_t *self = check_image(L, 1);
+		luaL_argcheck(L, self->root == self, 1, "cannot use child images as render target");
+
+		reset_render_target(L);
+
+		if (SDL_SetRenderTarget(renderer, self->texture))
+			luaL_error(L, "SDL_SetRenderTarget() failed: %s", SDL_GetError());
+
+		render_target = self->texture;
+		render_target_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+	}
+	return 0;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_video_clear(lua_State *L) {
+	set_draw_parameters(L);
+	if (SDL_RenderClear(renderer))
+		luaL_error(L, "SDL_RenderClear() failed: %s", SDL_GetError());
+	return 0;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_video_destroy_image(lua_State *L) {
+	image_t *self = luaL_checkudata(L, 1, "nox_image");
+	if (self->texture != NULL) {
+		if (self->texture == render_target)
+			reset_render_target(L);
+
+		SDL_DestroyTexture(self->texture);
+		self->texture = NULL;
+	}
+	return 0;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_video_load_image(lua_State *L) {
+	SDL_RWops *rw = check_binary(L, 1);
+	image_t *new = push_object(L, "nox_image", sizeof(image_t));
+	SDL_Surface *bmp = SDL_LoadBMP_RW(rw, SDL_TRUE);
+
+	new->root = new;
+	new->texture = NULL;
+
+	if (bmp == NULL)
+		return push_error(L, "SDL_LoadBMP_RW() failed: %s", SDL_GetError());
+
+	new->rect.x = 0;
+	new->rect.y = 0;
+	new->rect.w = bmp->w;
+	new->rect.h = bmp->h;
+
+	new->texture = SDL_CreateTextureFromSurface(renderer, bmp);
+	SDL_FreeSurface(bmp);
+
+	if (new->texture == NULL)
+		return push_error(L, "SDL_CreateTextureFromSurface() failed: %s", SDL_GetError());
+
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_video_create_image(lua_State *L) {
+	Uint32 pixel_format;
+	int w = (int)luaL_checkinteger(L, 1);
+	int h = (int)luaL_checkinteger(L, 2);
+	image_t *new = push_object(L, "nox_image", sizeof(image_t));
+
+	new->root = new;
+	new->texture = NULL;
+	new->rect.x = 0;
+	new->rect.y = 0;
+	new->rect.w = w;
+	new->rect.h = h;
+
+	if ((pixel_format = SDL_GetWindowPixelFormat(window)) == SDL_PIXELFORMAT_UNKNOWN)
+		return push_error(L, "SDL_GetWindowPixelFormat() failed: %s", SDL_GetError());
+
+	if ((new->texture = SDL_CreateTexture(renderer, pixel_format, SDL_TEXTUREACCESS_TARGET, w, h)) == NULL)
+		return push_error(L, "SDL_CreateTexture(%d, %d) failed: %s", w, h, SDL_GetError());
+
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_video_create_child_image(lua_State *L) {
+	image_t *self = check_image(L, 1);
+	int x = (int)luaL_checknumber(L, 2);
+	int y = (int)luaL_checknumber(L, 3);
+	int w = (int)luaL_checknumber(L, 4);
+	int h = (int)luaL_checknumber(L, 5);
+	image_t *new = push_object(L, "nox_image", sizeof(image_t));
+
+	x = maximum(0, x + self->rect.x);
+	y = maximum(0, y + self->rect.y);
+
+	new->root = self;
+	new->texture = NULL;
+	new->rect.x = clamp(x, 0, self->rect.w - 1);
+	new->rect.y = clamp(y, 0, self->rect.h - 1);
+	new->rect.w = clamp(w, 0, self->rect.w - x);
+	new->rect.h = clamp(h, 0, self->rect.h - y);
+
+	lua_pushvalue(L, 1);
+	lua_setuservalue(L, -2);
+
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_video_is_image_valid(lua_State *L) {
+	image_t *self = luaL_checkudata(L, 1, "nox_image");
+	lua_pushboolean(L, self->root->texture != NULL);
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_video_is_child_image(lua_State *L) {
+	image_t *self = check_image(L, 1);
+	lua_pushboolean(L, self->root != self);
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_video_get_image_size(lua_State *L) {
+	image_t *self = check_image(L, 1);
+	lua_pushinteger(L, self->rect.w);
+	lua_pushinteger(L, self->rect.h);
+	return 2;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_video_draw_image(lua_State *L) {
+	SDL_Rect dst;
+	image_t *self = check_image(L, 1);
+	dst.x = (int)luaL_checknumber(L, 2);
+	dst.y = (int)luaL_checknumber(L, 3);
+	dst.w = self->rect.w;
+	dst.h = self->rect.h;
+
+	if (SDL_SetTextureColorMod(self->root->texture, draw_color.r, draw_color.g, draw_color.b))
+		luaL_error(L, "SDL_SetTextureColorMod() failed: %s", SDL_GetError());
+	if (SDL_SetTextureAlphaMod(self->root->texture, draw_color.a))
+		luaL_error(L, "SDL_SetTextureAlphaMod() failed: %s", SDL_GetError());
+	if (SDL_SetTextureBlendMode(self->root->texture, blend_mode))
+		luaL_error(L, "SDL_SetTextureBlendMode() failed: %s", SDL_GetError());
+	if (SDL_RenderCopy(renderer, self->root->texture, &self->rect, &dst))
+		luaL_error(L, "SDL_RenderCopy() failed: %s", SDL_GetError());
+
+	return 0;
+}
+
+
+/*----------------------------------------------------------------------------*/
 static const luaL_Reg nox_video__funcs[] = {
 	{ "get_blend_mode", f_nox_video_get_blend_mode },
 	{ "set_blend_mode", f_nox_video_set_blend_mode },
 	{ "get_draw_color", f_nox_video_get_draw_color },
 	{ "set_draw_color", f_nox_video_set_draw_color },
+	{ "get_render_target", f_nox_video_get_render_target },
+	{ "set_render_target", f_nox_video_set_render_target },
+	{ "clear", f_nox_video_clear },
+	{ "destroy_image", f_nox_video_destroy_image },
+	{ "load_image", f_nox_video_load_image },
+	{ "create_image", f_nox_video_create_image },
+	{ "create_child_image", f_nox_video_create_child_image },
+	{ "is_image_valid", f_nox_video_is_image_valid },
+	{ "is_child_image", f_nox_video_is_child_image },
+	{ "get_image_size", f_nox_video_get_image_size },
+	{ "draw_image", f_nox_video_draw_image },
+	{ NULL, NULL }
+};
+
+
+/*----------------------------------------------------------------------------*/
+static const luaL_Reg nox_image__funcs[] = {
+	{ "__gc", f_nox_video_destroy_image },
+	{ "destroy", f_nox_video_destroy_image },
+	{ "create_child", f_nox_video_create_child_image },
+	{ "is_valid", f_nox_video_is_image_valid },
+	{ "is_child", f_nox_video_is_child_image },
+	{ "get_size", f_nox_video_get_image_size },
+	{ "draw", f_nox_video_draw_image },
+	{ "set_render_target", f_nox_video_set_render_target },
 	{ NULL, NULL }
 };
 
 
 /*----------------------------------------------------------------------------*/
 static int open_module_nox_video(lua_State *L) {
+	register_metatable(L, "nox_image", nox_image__funcs);
 	luaL_newlib(L, nox_video__funcs);
 	return 1;
 }

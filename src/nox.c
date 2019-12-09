@@ -1124,6 +1124,12 @@ static int init_nox(lua_State *L) {
 
 	SDL_PauseAudioDevice(audio_device, SDL_FALSE);
 
+	if (luaL_loadfile(L, "test.lua") != LUA_OK)
+		lua_error(L);
+	lua_call(L, 0, 0);
+
+	run_event_loop(L);
+
 	return 0;
 }
 

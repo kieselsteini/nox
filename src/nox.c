@@ -301,7 +301,7 @@ static void mix_audio_voices(void *userdata, Uint8 *stream8, int len8) {
 					} else {
 						l += ((float)voice->sample->data[pos + 0] / 32768.0f) * voice->gain;
 						r += ((float)voice->sample->data[pos + 1] / 32768.0f) * voice->gain;
-						voice->position += ((float)voice->sample->spec.freq / audio_freq) * voice->pitch * 2.0f;
+						voice->position += ((float)voice->sample->spec.freq / audio_freq) * (voice->pitch * 2.0f);
 					}
 				} else {
 					if (voice->looping) {
@@ -396,6 +396,25 @@ static int f_nox_audio_destroy_sample(lua_State *L) {
 
 
 /*----------------------------------------------------------------------------*/
+static int f_nox_audio_load_sample(lua_State *L) {
+	Uint32 length;
+	SDL_RWops *rw = check_binary(L, 1);
+	sample_t *new = push_object(L, "nox_sample", sizeof(sample_t));
+
+	new->data = NULL;
+	if (SDL_LoadWAV_RW(rw, SDL_TRUE, &new->spec, (Uint8**)&new->data, &length) == NULL)
+		return push_error(L, "SDL_LoadWAV_RW() failed: %s", SDL_GetError());
+	if (new->spec.format != AUDIO_S16SYS)
+		return push_error(L, "SDL_LoadWAV_RW() returned wrong audio format");
+	if (new->spec.channels != 1 && new->spec.channels != 2)
+		return push_error(L, "SDL_LoadWAV_RW() returned wrong number of channels");
+
+	new->spec.size = length / 2;
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
 static int f_nox_audio_is_sample_valid(lua_State *L) {
 	sample_t *self = luaL_checkudata(L, 1, "nox_sample");
 	lua_pushboolean(L, self->data != NULL);
@@ -449,7 +468,7 @@ static int f_nox_audio_play_sample(lua_State *L) {
 	voice_t *voice;
 	sample_t *self = check_sample(L, 1);
 	float gain = (float)luaL_optnumber(L, 2, 1.0);
-	float pitch = (float)luaL_optnumber(L, 3, 0.0);
+	float pitch = (float)luaL_optnumber(L, 3, 1.0);
 	float pan = (float)luaL_optnumber(L, 4, 0.0);
 	int looping = lua_toboolean(L, 5);
 
@@ -487,6 +506,7 @@ static const luaL_Reg nox_audio__funcs[] = {
 	{ "stop_voice", f_nox_audio_stop_voice },
 	{ "stop_all_voices", f_nox_audio_stop_all_voices },
 	{ "destroy_sample", f_nox_audio_destroy_sample },
+	{ "load_sample", f_nox_audio_load_sample },
 	{ "is_sample_valid", f_nox_audio_is_sample_valid },
 	{ "is_sample_playing", f_nox_audio_is_sample_playing },
 	{ "get_sample_length", f_nox_audio_get_sample_length },

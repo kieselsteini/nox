@@ -36,6 +36,12 @@ nox.audio.destroy_sample(sample)
 sample:destroy()
 ```
 
+#### nox.audio.load_sample(binary_string)
+Load an audio sample object from the given *binary_string*.
+```lua
+local sample = assert(nox.audio.load_sample(binary_string))
+```
+
 #### nox.audio.is_sample_valid(sample)
 Returns *true* when the sample is not destroyed.
 ```lua

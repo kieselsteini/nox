@@ -56,6 +56,11 @@
 ================================================================================
 */
 /*----------------------------------------------------------------------------*/
+#define NOX_AUTHOR			"Sebastian Steinhauer <s.steinhauer@yahoo.de>"
+#define NOX_VERSION			"0.1.0"
+
+
+/*----------------------------------------------------------------------------*/
 #define WINDOW_TITLE		"Nox Window"
 #define WINDOW_WIDTH		1280
 #define WINDOW_HEIGHT		720
@@ -917,6 +922,12 @@ static int open_module_nox_window(lua_State *L) {
 /*----------------------------------------------------------------------------*/
 static int open_module_nox(lua_State *L) {
 	lua_newtable(L);
+
+	lua_pushstring(L, NOX_AUTHOR);
+	lua_setfield(L, -2, "_AUTHOR");
+
+	lua_pushstring(L, NOX_VERSION);
+	lua_setfield(L, -2, "_VERSION");
 
 	luaL_requiref(L, "nox.audio", open_module_nox_audio, 0);
 	lua_setfield(L, -2, "audio");

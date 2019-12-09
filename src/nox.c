@@ -49,6 +49,7 @@
 
 
 /*----------------------------------------------------------------------------*/
+#include "../stb/SDL_stbimage.h"
 #define STB_VORBIS_HEADER_ONLY
 #include "../stb/stb_vorbis.c"
 
@@ -190,17 +191,6 @@ static void register_metatable(lua_State *L, const char *name, const luaL_Reg fu
 	lua_setfield(L, -2, "__index");
 	luaL_setfuncs(L, funcs, 0);
 	lua_pop(L, 1);
-}
-
-
-/*----------------------------------------------------------------------------*/
-static SDL_RWops *check_binary(lua_State *L, int idx) {
-	size_t length;
-	const char *data = luaL_checklstring(L, idx, &length);
-	SDL_RWops *rw = SDL_RWFromConstMem(data, length);
-	if (rw == NULL)
-		luaL_error(L, "SDL_RWFromConstMem() failed: %s", SDL_GetError());
-	return rw;
 }
 
 
@@ -745,26 +735,17 @@ static int f_nox_video_destroy_image(lua_State *L) {
 
 /*----------------------------------------------------------------------------*/
 static int f_nox_video_load_image(lua_State *L) {
-	SDL_RWops *rw = check_binary(L, 1);
+	size_t length;
+	const char *binary = luaL_checklstring(L, 1, &length);
 	image_t *new = push_object(L, "nox_image", sizeof(image_t));
-	SDL_Surface *bmp = SDL_LoadBMP_RW(rw, SDL_TRUE);
-
-	new->root = new;
-	new->texture = NULL;
-
-	if (bmp == NULL)
-		return push_error(L, "SDL_LoadBMP_RW() failed: %s", SDL_GetError());
 
 	new->rect.x = 0;
 	new->rect.y = 0;
-	new->rect.w = bmp->w;
-	new->rect.h = bmp->h;
-
-	new->texture = SDL_CreateTextureFromSurface(renderer, bmp);
-	SDL_FreeSurface(bmp);
-
+	new->root = new;
+	new->texture = STBIMG_LoadTextureFromMemory(renderer, (const unsigned char*)binary, (int)length);
 	if (new->texture == NULL)
-		return push_error(L, "SDL_CreateTextureFromSurface() failed: %s", SDL_GetError());
+		return push_error(L, "STBIMG_LoadTextureFromMemory() failed: %s", SDL_GetError());
+	SDL_QueryTexture(new->texture, NULL, NULL, &new->rect.w, &new->rect.h);
 
 	return 1;
 }

@@ -158,7 +158,7 @@ static int push_callback(lua_State *L, const char *name) {
 		lua_pop(L, 1);
 		return 0;
 	}
-	if (lua_getfield(L, -1, name) != LUA_TTABLE) {
+	if (lua_getfield(L, -1, name) != LUA_TFUNCTION) {
 		lua_pop(L, 2);
 		return 0;
 	}
@@ -404,6 +404,23 @@ static int f_nox_audio_is_sample_valid(lua_State *L) {
 
 
 /*----------------------------------------------------------------------------*/
+static int f_nox_audio_is_sample_playing(lua_State *L) {
+	int i;
+	sample_t *self = check_sample(L, 1);
+
+	for (i = 0; i < AUDIO_VOICES; ++i) {
+		if (audio_voices[i].sample == self) {
+			lua_pushboolean(L, 1);
+			return 1;
+		}
+	}
+
+	lua_pushboolean(L, 0);
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
 static int f_nox_audio_get_sample_length(lua_State *L) {
 	sample_t *self = check_sample(L, 1);
 	if (self->spec.channels == 1) {
@@ -471,6 +488,7 @@ static const luaL_Reg nox_audio__funcs[] = {
 	{ "stop_all_voices", f_nox_audio_stop_all_voices },
 	{ "destroy_sample", f_nox_audio_destroy_sample },
 	{ "is_sample_valid", f_nox_audio_is_sample_valid },
+	{ "is_sample_playing", f_nox_audio_is_sample_playing },
 	{ "get_sample_length", f_nox_audio_get_sample_length },
 	{ "stop_sample", f_nox_audio_stop_sample },
 	{ "play_sample", f_nox_audio_play_sample },
@@ -479,7 +497,21 @@ static const luaL_Reg nox_audio__funcs[] = {
 
 
 /*----------------------------------------------------------------------------*/
+static const luaL_Reg nox_sample__funcs[] = {
+	{ "__gc", f_nox_audio_destroy_sample },
+	{ "destroy", f_nox_audio_destroy_sample },
+	{ "is_valid", f_nox_audio_is_sample_valid },
+	{ "is_playing", f_nox_audio_is_sample_playing },
+	{ "get_length", f_nox_audio_get_sample_length },
+	{ "stop", f_nox_audio_stop_sample },
+	{ "play", f_nox_audio_play_sample },
+	{ NULL, NULL }
+};
+
+
+/*----------------------------------------------------------------------------*/
 static int open_module_nox_audio(lua_State *L) {
+	register_metatable(L, "nox_sample", nox_sample__funcs);
 	luaL_newlib(L, nox_audio__funcs);
 	return 1;
 }

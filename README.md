@@ -43,6 +43,13 @@ local valid = nox.audio.is_sample_valid(sample)
 local valid = sample:is_valid()
 ```
 
+#### nox.audio.is_sample_playing(sample)
+Returns *true* if the given *sample* object is currently playing.
+```lua
+local playing = nox.audio.is_sample_playing(sample)
+local playing = sample:is_playing()
+```
+
 #### nox.audio.get_sample_length(sample)
 Returns the length of the sample object in seconds.
 ```lua

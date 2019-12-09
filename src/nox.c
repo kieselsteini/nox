@@ -235,6 +235,54 @@ static int open_module_nox_events(lua_State *L) {
 /*
 --------------------------------------------------------------------------------
 
+		Module: nox.system
+
+--------------------------------------------------------------------------------
+*/
+/*----------------------------------------------------------------------------*/
+static int f_nox_system_get_base_path(lua_State *L) {
+	char *path = SDL_GetBasePath();
+	if (path == NULL)
+		return push_error(L, "SDL_GetBasePath() failed: %s", SDL_GetError());
+
+	lua_pushstring(L, path);
+	SDL_free(path);
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_system_get_pref_path(lua_State *L) {
+	const char *org = luaL_checkstring(L, 1);
+	const char *app = luaL_checkstring(L, 2);
+	char *path = SDL_GetPrefPath(org, app);
+	if (path == NULL)
+		return push_error(L, "SDL_GetPrefPath() failed: %s", SDL_GetError());
+
+	lua_pushstring(L, path);
+	SDL_free(path);
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static const luaL_Reg nox_system__funcs[] = {
+	{ "get_base_path", f_nox_system_get_base_path },
+	{ "get_pref_path", f_nox_system_get_pref_path },
+	{ NULL, NULL }
+};
+
+
+/*----------------------------------------------------------------------------*/
+static int open_module_nox_system(lua_State *L) {
+	luaL_newlib(L, nox_system__funcs);
+	return 1;
+}
+
+
+/*
+--------------------------------------------------------------------------------
+
 		Module: nox.video
 
 --------------------------------------------------------------------------------
@@ -588,6 +636,9 @@ static int open_module_nox(lua_State *L) {
 
 	luaL_requiref(L, "nox.events", open_module_nox_events, 0);
 	lua_setfield(L, -2, "events");
+
+	luaL_requiref(L, "nox.system", open_module_nox_system, 0);
+	lua_setfield(L, -2, "system");
 
 	luaL_requiref(L, "nox.video", open_module_nox_video, 0);
 	lua_setfield(L, -2, "video");

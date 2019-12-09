@@ -48,6 +48,11 @@
 #include "SDL.h"
 
 
+/*----------------------------------------------------------------------------*/
+#define STB_VORBIS_HEADER_ONLY
+#include "../stb/stb_vorbis.c"
+
+
 /*
 ================================================================================
 
@@ -83,7 +88,9 @@ typedef struct image_t {
 /*----------------------------------------------------------------------------*/
 typedef struct sample_t {
 	Sint16					*data;
-	SDL_AudioSpec			spec;
+	float					freq;
+	int						length;
+	int						channels;
 } sample_t;
 
 
@@ -281,9 +288,8 @@ static void purge_voices(lua_State *L) {
 /*----------------------------------------------------------------------------*/
 static void mix_audio_voices(void *userdata, Uint8 *stream8, int len8) {
 	voice_t *voice;
-	int i, j, len = len8 / (sizeof(float) * 2);
+	int i, j, pos, len = len8 / (sizeof(float) * 2);
 	float l, r, sample, *stream = (float*)stream8;
-	Uint32 pos;
 
 	for (i = 0; i < len; ++i) {
 		l = r = 0.0f;
@@ -291,17 +297,17 @@ static void mix_audio_voices(void *userdata, Uint8 *stream8, int len8) {
 			voice = &audio_voices[j];
 			if (voice->sample != NULL) {
 				pos = (Uint32)voice->position;
-				if (pos < voice->sample->spec.size) {
-					if (voice->sample->spec.channels == 1) {
+				if (pos < voice->sample->length) {
+					if (voice->sample->channels == 1) {
 						sample = ((float)voice->sample->data[pos] / 32768.0f) * voice->gain;
 						// FIXME: implement panning
 						l += sample;
 						r += sample;
-						voice->position += ((float)voice->sample->spec.freq / audio_freq) * voice->pitch;
+						voice->position += ((float)voice->sample->freq / audio_freq) * voice->pitch;
 					} else {
 						l += ((float)voice->sample->data[pos + 0] / 32768.0f) * voice->gain;
 						r += ((float)voice->sample->data[pos + 1] / 32768.0f) * voice->gain;
-						voice->position += ((float)voice->sample->spec.freq / audio_freq) * (voice->pitch * 2.0f);
+						voice->position += ((float)voice->sample->freq / audio_freq) * (voice->pitch * 2.0f);
 					}
 				} else {
 					if (voice->looping) {
@@ -397,19 +403,24 @@ static int f_nox_audio_destroy_sample(lua_State *L) {
 
 /*----------------------------------------------------------------------------*/
 static int f_nox_audio_load_sample(lua_State *L) {
-	Uint32 length;
-	SDL_RWops *rw = check_binary(L, 1);
-	sample_t *new = push_object(L, "nox_sample", sizeof(sample_t));
+	sample_t *new;
+	size_t length;
+	int channels, sample_rate, samples;
+	short *data;
+	const char *binary = luaL_checklstring(L, 1, &length);
 
+	new = push_object(L, "nox_sample", sizeof(sample_t));
 	new->data = NULL;
-	if (SDL_LoadWAV_RW(rw, SDL_TRUE, &new->spec, (Uint8**)&new->data, &length) == NULL)
-		return push_error(L, "SDL_LoadWAV_RW() failed: %s", SDL_GetError());
-	if (new->spec.format != AUDIO_S16SYS)
-		return push_error(L, "SDL_LoadWAV_RW() returned wrong audio format");
-	if (new->spec.channels != 1 && new->spec.channels != 2)
-		return push_error(L, "SDL_LoadWAV_RW() returned wrong number of channels");
 
-	new->spec.size = length / 2;
+	samples = stb_vorbis_decode_memory((const unsigned char*)binary, (int)length, &channels, &sample_rate, &data);
+	if (samples <= 0)
+		return push_error(L, "stb_vorbis_decode_memory() failed");
+
+	new->data = data;
+	new->freq = sample_rate;
+	new->length = samples;
+	new->channels = channels;
+
 	return 1;
 }
 
@@ -442,11 +453,11 @@ static int f_nox_audio_is_sample_playing(lua_State *L) {
 /*----------------------------------------------------------------------------*/
 static int f_nox_audio_get_sample_length(lua_State *L) {
 	sample_t *self = check_sample(L, 1);
-	if (self->spec.channels == 1) {
-		lua_pushnumber(L, (lua_Number)self->spec.size / (lua_Number)self->spec.freq);
+	if (self->channels == 1) {
+		lua_pushnumber(L, (lua_Number)self->length / (lua_Number)self->freq);
 		return 1;
-	} else if (self->spec.channels == 2) {
-		lua_pushnumber(L, ((lua_Number)self->spec.size / 2.0) / (lua_Number)self->spec.freq);
+	} else if (self->channels == 2) {
+		lua_pushnumber(L, ((lua_Number)self->length / 2.0) / (lua_Number)self->freq);
 		return 1;
 	} else {
 		return push_error(L, "invalid number of channels");

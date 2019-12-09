@@ -2,3 +2,6 @@
 *.o
 nox
 test.lua
+
+# ignore data directory
+data

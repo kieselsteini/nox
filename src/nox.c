@@ -347,6 +347,90 @@ static void handle_SDL_events(lua_State *L) {
 			case SDL_QUIT:
 				event_loop_running = 0;
 				break;
+
+			case SDL_KEYDOWN:
+				if (push_callback(L, "on_key_down")) {
+					lua_pushstring(L, SDL_GetKeyName(ev.key.keysym.sym));
+					lua_call(L, 1, 0);
+				}
+				break;
+
+			case SDL_KEYUP:
+				if (push_callback(L, "on_key_up")) {
+					lua_pushstring(L, SDL_GetKeyName(ev.key.keysym.sym));
+					lua_call(L, 1, 0);
+				}
+				break;
+
+			case SDL_TEXTINPUT:
+				if (push_callback(L, "on_text_input")) {
+					lua_pushstring(L, ev.text.text);
+					lua_call(L, 1, 0);
+				}
+				break;
+
+			case SDL_MOUSEBUTTONDOWN:
+				if (push_callback(L, "on_mouse_down")) {
+					lua_pushinteger(L, ev.button.button);
+					lua_call(L, 1, 0);
+				}
+				break;
+
+			case SDL_MOUSEBUTTONUP:
+				if (push_callback(L, "on_mouse_up")) {
+					lua_pushinteger(L, ev.button.button);
+					lua_call(L, 1, 0);
+				}
+				break;
+
+			case SDL_MOUSEMOTION:
+				if (push_callback(L, "on_mouse_moved")) {
+					lua_pushinteger(L, ev.motion.x);
+					lua_pushinteger(L, ev.motion.y);
+					lua_call(L, 2, 0);
+				}
+				break;
+
+			case SDL_CONTROLLERDEVICEADDED:
+				if (SDL_GameControllerOpen(ev.cdevice.which) != NULL) {
+					if (push_callback(L, "on_controller_added")) {
+						lua_pushinteger(L, ev.cdevice.which);
+						lua_call(L, 1, 0);
+					}
+				}
+				break;
+
+			case SDL_CONTROLLERDEVICEREMOVED:
+				if (push_callback(L, "on_controller_removed")) {
+					lua_pushinteger(L, ev.cdevice.which);
+					lua_call(L, 1, 0);
+				}
+				break;
+
+			case SDL_CONTROLLERBUTTONDOWN:
+				if (push_callback(L, "on_controller_down")) {
+					lua_pushinteger(L, ev.cbutton.which);
+					lua_pushstring(L, SDL_GameControllerGetStringForButton(ev.cbutton.button));
+					lua_call(L, 2, 0);
+				}
+				break;
+
+			case SDL_CONTROLLERBUTTONUP:
+				if (push_callback(L, "on_controller_up")) {
+					lua_pushinteger(L, ev.cbutton.which);
+					lua_pushstring(L, SDL_GameControllerGetStringForButton(ev.cbutton.button));
+					lua_call(L, 2, 0);
+				}
+				break;
+
+			case SDL_CONTROLLERAXISMOTION:
+				if (push_callback(L, "on_controller_moved")) {
+					lua_pushinteger(L, ev.caxis.which);
+					lua_pushstring(L, SDL_GameControllerGetStringForAxis(ev.caxis.axis));
+					lua_pushnumber(L, (lua_Number)ev.caxis.value / 32768.0);
+					lua_call(L, 3, 0);
+				}
+				break;
 		}
 	}
 }

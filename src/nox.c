@@ -63,11 +63,35 @@
 
 
 /*----------------------------------------------------------------------------*/
+#define AUDIO_VOICES		32
+#define AUDIO_FREQUENCY		44100
+
+
+/*----------------------------------------------------------------------------*/
 typedef struct image_t {
 	struct image_t			*root;
 	SDL_Texture 			*texture;
 	SDL_Rect				rect;
 } image_t;
+
+
+/*----------------------------------------------------------------------------*/
+typedef struct sample_t {
+	Sint16					*data;
+	SDL_AudioSpec			spec;
+} sample_t;
+
+
+/*----------------------------------------------------------------------------*/
+typedef struct voice_t {
+	sample_t				*sample;
+	int						sample_ref;
+	float					position;
+	float					gain;
+	float					pitch;
+	float					pan;
+	int						looping;
+} voice_t;
 
 
 /*
@@ -88,6 +112,13 @@ static SDL_Color draw_color = { 255, 255, 255, 255 };
 static SDL_BlendMode blend_mode = SDL_BLENDMODE_BLEND;
 static SDL_Texture *render_target = NULL;
 static int render_target_ref = LUA_NOREF;
+
+
+/*----------------------------------------------------------------------------*/
+static SDL_AudioDeviceID audio_device = 0;
+static float audio_gain = 1.0f;
+static float audio_freq;
+static voice_t audio_voices[AUDIO_VOICES];
 
 
 /*
@@ -162,6 +193,22 @@ static SDL_RWops *check_binary(lua_State *L, int idx) {
 
 
 /*----------------------------------------------------------------------------*/
+static voice_t *check_voice(lua_State *L, int idx) {
+	int n = (int)luaL_checkinteger(L, 1);
+	luaL_argcheck(L, n >= 1 && n <= AUDIO_VOICES, idx, "invalid voice index");
+	return &audio_voices[n - 1];
+}
+
+
+/*----------------------------------------------------------------------------*/
+static sample_t *check_sample(lua_State *L, int idx) {
+	sample_t *self = luaL_checkudata(L, idx, "nox_sample");
+	luaL_argcheck(L, self->data != NULL, idx, "attempt to operate on destroyed sample");
+	return self;
+}
+
+
+/*----------------------------------------------------------------------------*/
 static image_t *check_image(lua_State *L, int idx) {
 	image_t *self = luaL_checkudata(L, idx, "nox_image");
 	luaL_argcheck(L, self->root->texture != NULL, idx, "attempt to operate on destroyed image");
@@ -189,6 +236,86 @@ static void set_draw_parameters(lua_State *L) {
 }
 
 
+/*----------------------------------------------------------------------------*/
+static void stop_voice(lua_State *L, voice_t *voice) {
+	SDL_LockAudioDevice(audio_device);
+	voice->sample = NULL;
+	SDL_UnlockAudioDevice(audio_device);
+
+	luaL_unref(L, LUA_REGISTRYINDEX, voice->sample_ref);
+	voice->sample_ref = LUA_NOREF;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static void stop_sample(lua_State *L, sample_t *sample) {
+	int i;
+
+	SDL_LockAudioDevice(audio_device);
+	for (i = 0; i < AUDIO_VOICES; ++i) {
+		if (audio_voices[i].sample == sample)
+			stop_voice(L, &audio_voices[i]);
+	}
+	SDL_UnlockAudioDevice(audio_device);
+}
+
+
+/*----------------------------------------------------------------------------*/
+static void purge_voices(lua_State *L) {
+	int i;
+
+	SDL_LockAudioDevice(audio_device);
+	for (i = 0; i < AUDIO_VOICES; ++i) {
+		if (audio_voices[i].sample == NULL && audio_voices[i].sample_ref != LUA_NOREF)
+			stop_voice(L, &audio_voices[i]);
+	}
+	SDL_UnlockAudioDevice(audio_device);
+}
+
+
+/*----------------------------------------------------------------------------*/
+static void mix_audio_voices(void *userdata, Uint8 *stream8, int len8) {
+	voice_t *voice;
+	int i, j, len = len8 / (sizeof(float) * 2);
+	float l, r, sample, *stream = (float*)stream8;
+	Uint32 pos;
+
+	for (i = 0; i < len; ++i) {
+		l = r = 0.0f;
+		for (j = 0; j < AUDIO_VOICES; ++j) {
+			voice = &audio_voices[j];
+			if (voice->sample != NULL) {
+				pos = (Uint32)voice->position;
+				if (pos < voice->sample->spec.size) {
+					if (voice->sample->spec.channels == 1) {
+						sample = ((float)voice->sample->data[pos] / 32768.0f) * voice->gain;
+						// FIXME: implement panning
+						l += sample;
+						r += sample;
+						voice->position += ((float)voice->sample->spec.freq / audio_freq) * voice->pitch;
+					} else {
+						l += ((float)voice->sample->data[pos + 0] / 32768.0f) * voice->gain;
+						r += ((float)voice->sample->data[pos + 1] / 32768.0f) * voice->gain;
+						voice->position += ((float)voice->sample->spec.freq / audio_freq) * voice->pitch * 2.0f;
+					}
+				} else {
+					if (voice->looping) {
+						voice->position = 0.0f;
+					} else {
+						voice->sample = NULL;
+					}
+				}
+			}
+		}
+
+		l *= audio_gain; *stream++ = clamp(l, -1.0f, 1.0f);
+		r *= audio_gain; *stream++ = clamp(r, -1.0f, 1.0f);
+	}
+
+	(void)userdata;
+}
+
+
 /*
 ================================================================================
 
@@ -196,6 +323,163 @@ static void set_draw_parameters(lua_State *L) {
 
 ================================================================================
 */
+/*
+--------------------------------------------------------------------------------
+
+		Module: nox.audio
+
+--------------------------------------------------------------------------------
+*/
+/*----------------------------------------------------------------------------*/
+static int f_nox_audio_get_global_gain(lua_State *L) {
+	lua_pushnumber(L, audio_gain);
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_audio_set_global_gain(lua_State *L) {
+	float gain = (float)luaL_checknumber(L, 1);
+
+	SDL_LockAudioDevice(audio_device);
+	audio_gain = clamp(gain, 0.0f, 1.0f);
+	SDL_UnlockAudioDevice(audio_device);
+
+	return 0;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_audio_is_voice_playing(lua_State *L) {
+	voice_t *self = check_voice(L, 1);
+	lua_pushboolean(L, self->sample != NULL);
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_audio_stop_voice(lua_State *L) {
+	voice_t *self = check_voice(L, 1);
+	stop_voice(L, self);
+	return 0;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_audio_stop_all_voices(lua_State *L) {
+	int i;
+
+	SDL_LockAudioDevice(audio_device);
+	for (i = 0; i < AUDIO_VOICES; ++i)
+		stop_voice(L, &audio_voices[i]);
+	SDL_UnlockAudioDevice(audio_device);
+
+	return 0;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_audio_destroy_sample(lua_State *L) {
+	sample_t *self = luaL_checkudata(L, 1, "nox_sample");
+	if (self->data != NULL) {
+		stop_sample(L, self);
+		SDL_FreeWAV((Uint8*)self->data);
+		self->data = NULL;
+	}
+	return 0;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_audio_is_sample_valid(lua_State *L) {
+	sample_t *self = luaL_checkudata(L, 1, "nox_sample");
+	lua_pushboolean(L, self->data != NULL);
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_audio_get_sample_length(lua_State *L) {
+	sample_t *self = check_sample(L, 1);
+	if (self->spec.channels == 1) {
+		lua_pushnumber(L, (lua_Number)self->spec.size / (lua_Number)self->spec.freq);
+		return 1;
+	} else if (self->spec.channels == 2) {
+		lua_pushnumber(L, ((lua_Number)self->spec.size / 2.0) / (lua_Number)self->spec.freq);
+		return 1;
+	} else {
+		return push_error(L, "invalid number of channels");
+	}
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_audio_stop_sample(lua_State *L) {
+	sample_t *self = check_sample(L, 1);
+	stop_sample(L, self);
+	return 0;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_audio_play_sample(lua_State *L) {
+	int i;
+	voice_t *voice;
+	sample_t *self = check_sample(L, 1);
+	float gain = (float)luaL_optnumber(L, 2, 1.0);
+	float pitch = (float)luaL_optnumber(L, 3, 0.0);
+	float pan = (float)luaL_optnumber(L, 4, 0.0);
+	int looping = lua_toboolean(L, 5);
+
+	for (i = 0; i < AUDIO_VOICES; ++i) {
+		voice = &audio_voices[i];
+		if (voice->sample == NULL && voice->sample_ref == LUA_NOREF) {
+
+			voice->position = 0.0f;
+			voice->gain = clamp(gain, 0.0f, 1.0f);
+			voice->pitch = clamp(pitch, 0.5f, 2.0f);
+			voice->pan = clamp(pan, -1.0f, 1.0f);
+			voice->looping = looping;
+
+			lua_pushvalue(L, 1);
+			voice->sample_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+			SDL_LockAudioDevice(audio_device);
+			voice->sample = self;
+			SDL_UnlockAudioDevice(audio_device);
+
+			lua_pushinteger(L, i + 1);
+			return 1;
+		}
+	}
+
+	return push_error(L, "no free audio voice");
+}
+
+
+/*----------------------------------------------------------------------------*/
+static const luaL_Reg nox_audio__funcs[] = {
+	{ "get_global_gain", f_nox_audio_get_global_gain },
+	{ "set_global_gain", f_nox_audio_set_global_gain },
+	{ "is_voice_playing", f_nox_audio_is_voice_playing },
+	{ "stop_voice", f_nox_audio_stop_voice },
+	{ "stop_all_voices", f_nox_audio_stop_all_voices },
+	{ "destroy_sample", f_nox_audio_destroy_sample },
+	{ "is_sample_valid", f_nox_audio_is_sample_valid },
+	{ "get_sample_length", f_nox_audio_get_sample_length },
+	{ "stop_sample", f_nox_audio_stop_sample },
+	{ "play_sample", f_nox_audio_play_sample },
+	{ NULL, NULL }
+};
+
+
+/*----------------------------------------------------------------------------*/
+static int open_module_nox_audio(lua_State *L) {
+	luaL_newlib(L, nox_audio__funcs);
+	return 1;
+}
+
+
 /*
 --------------------------------------------------------------------------------
 
@@ -634,6 +918,9 @@ static int open_module_nox_window(lua_State *L) {
 static int open_module_nox(lua_State *L) {
 	lua_newtable(L);
 
+	luaL_requiref(L, "nox.audio", open_module_nox_audio, 0);
+	lua_setfield(L, -2, "audio");
+
 	luaL_requiref(L, "nox.events", open_module_nox_events, 0);
 	lua_setfield(L, -2, "events");
 
@@ -765,6 +1052,7 @@ static void run_event_loop(lua_State *L) {
 	last_tick = SDL_GetTicks();
 
 	while (event_loop_running) {
+		purge_voices(L);
 		handle_SDL_events(L);
 
 		current_tick = SDL_GetTicks();
@@ -792,6 +1080,9 @@ static void run_event_loop(lua_State *L) {
 */
 /*----------------------------------------------------------------------------*/
 static int init_nox(lua_State *L) {
+	int i;
+	SDL_AudioSpec want, have;
+
 	if (SDL_Init(SDL_INIT_EVERYTHING))
 		luaL_error(L, "SDL_Init() failed: %s", SDL_GetError());
 
@@ -800,12 +1091,36 @@ static int init_nox(lua_State *L) {
 	if ((renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_TARGETTEXTURE | SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC)) == NULL)
 		luaL_error(L, "SDL_CreateRenderer() failed: %s", SDL_GetError());
 
+	SDL_zero(want); SDL_zero(have);
+	want.freq = AUDIO_FREQUENCY;
+	want.format = AUDIO_F32SYS;
+	want.channels = 2;
+	want.samples = 1024 * 4;
+	want.callback = mix_audio_voices;
+
+	if ((audio_device = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0)) == 0)
+		luaL_error(L, "SDL_OpenAudioDevice() failed: %s", SDL_GetError());
+	if (have.format != AUDIO_F32SYS)
+		luaL_error(L, "SDL_OpenAudioDevice() returned wrong audio format");
+	if (have.channels != 2)
+		luaL_error(L, "SDL_OpenAudioDevice() returned wrong number of channels");
+
+	audio_freq = have.freq;
+	for (i = 0; i < AUDIO_VOICES; ++i) {
+		audio_voices[i].sample = NULL;
+		audio_voices[i].sample_ref = LUA_NOREF;
+	}
+
+	SDL_PauseAudioDevice(audio_device, SDL_FALSE);
+
 	return 0;
 }
 
 
 /*----------------------------------------------------------------------------*/
 static void shutdown_nox() {
+	if (audio_device != 0)
+		SDL_CloseAudioDevice(audio_device);
 	if (renderer != NULL)
 		SDL_DestroyRenderer(renderer);
 	if (window != NULL)
@@ -831,6 +1146,8 @@ int main() {
 	if (lua_pcall(L, 0, 0, -2) != LUA_OK) {
 		fprintf(stderr, "%s\n", lua_tostring(L, -1));
 	}
+
+	SDL_PauseAudioDevice(audio_device, SDL_FALSE); /* stop audio thread before closing Lua state */
 
 	lua_close(L);
 	shutdown_nox();

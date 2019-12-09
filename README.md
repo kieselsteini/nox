@@ -2,6 +2,68 @@
 
 ## API
 
+### nox.audio
+
+#### nox.audio.get_global_gain()
+Return the current global gain.
+```lua
+local gain = nox.audio.get_global_gain()
+```
+
+#### nox.audio.set_global_gain(gain)
+Set the current global gain (0.0 - 1.0).
+```lua
+nox.audio.set_global_gain(1.0) -- set maximum gain
+nox.audio.set_global_gain(0.0) -- set minimum gain (silence)
+```
+
+#### nox.audio.is_voice_playing(index)
+Returns *true* if the voice with the *index* is playing.
+```lua
+local is_playing = nox.audio.is_voice_playing(1)
+```
+
+#### nox.audio.stop_voice(index)
+Stop the playback for the given voice *index*.
+
+#### nox.audio.stop_all_voices()
+Stop the playback of all voices.
+
+#### nox.audio.destroy_sample(sample)
+Explicitly destroys a sample object.
+```lua
+nox.audio.destroy_sample(sample)
+sample:destroy()
+```
+
+#### nox.audio.is_sample_valid(sample)
+Returns *true* when the sample is not destroyed.
+```lua
+local valid = nox.audio.is_sample_valid(sample)
+local valid = sample:is_valid()
+```
+
+#### nox.audio.get_sample_length(sample)
+Returns the length of the sample object in seconds.
+```lua
+local length = nox.audio.get_sample_length(sample)
+local length = sample:get_length()
+```
+
+#### nox.audio.stop_sample(sample)
+Stop the playback of this *sample* object on all channels.
+```lua
+nox.audio.stop_sample(sample)
+sample:stop()
+```
+
+#### nox.audio.play_sample(sample [, gain, pitch, pan, looping])
+Plays the given *sample* object with the given *gain*, *pitch* and *pan*. If *looping* is true the playback will be looped. This function will return the voice index on which this sample is playing.
+```lua
+local idx = nox.audio.play_sample(sample)
+sample:play(0.5) -- play the sample with 50% volume
+```
+
 ### nox.events
 
 #### nox.events.emit(name [, ...])

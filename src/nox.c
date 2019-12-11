@@ -45,6 +45,11 @@
 
 
 /*----------------------------------------------------------------------------*/
+#include "xxhash.h"
+#include "lz4frame.h"
+
+
+/*----------------------------------------------------------------------------*/
 #include "SDL.h"
 
 
@@ -577,6 +582,112 @@ static int open_module_nox_events(lua_State *L) {
 /*
 --------------------------------------------------------------------------------
 
+		Module: nox.math
+
+--------------------------------------------------------------------------------
+*/
+/*----------------------------------------------------------------------------*/
+static int f_nox_math_xxhash(lua_State *L) {
+	size_t length;
+	const char *data = luaL_checklstring(L, 1, &length);
+	unsigned int seed = (unsigned int)luaL_optinteger(L, 2, 0);
+
+	lua_pushinteger(L, XXH32(data, length, seed));
+
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_math_compress(lua_State *L) {
+	LZ4F_preferences_t prefs;
+	size_t src_size, dst_size;
+	luaL_Buffer buffer;
+	char *dst_data;
+	const char *src_data = luaL_checklstring(L, 1, &src_size);
+	int compression_level = (int)luaL_optinteger(L, 2, 9);
+
+	SDL_zero(prefs);
+	prefs.compressionLevel = compression_level;
+
+	dst_size = LZ4F_compressFrameBound(src_size, &prefs);
+	if (LZ4F_isError(dst_size))
+		return push_error(L, "LZ4F_compressFrameBound() failed: %s", LZ4F_getErrorName(dst_size));
+
+	dst_data = luaL_buffinitsize(L, &buffer, dst_size);
+	dst_size = LZ4F_compressFrame(dst_data, dst_size, src_data, src_size, &prefs);
+
+	if (LZ4F_isError(dst_size))
+		return push_error(L, "LZ4F_compressFrame() failed: %s", LZ4F_getErrorName(dst_size));
+
+	luaL_pushresultsize(&buffer, dst_size);
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static int f_nox_math_decompress(lua_State *L) {
+	size_t src_size, dst_size, lz_avail, lz_hint;
+	char data[1024 * 64];
+	luaL_Buffer buffer;
+	LZ4F_dctx *dctx;
+	LZ4F_errorCode_t lz_err;
+	LZ4F_decompressOptions_t options;
+	const char *src_data = luaL_checklstring(L, 1, &src_size);
+
+	lz_err = LZ4F_createDecompressionContext(&dctx, LZ4F_VERSION);
+	if (LZ4F_isError(lz_err))
+		return push_error(L, "LZ4F_createDecompressionContext() failed: %s", LZ4F_getErrorName(lz_err));
+
+	SDL_zero(options);
+	luaL_buffinit(L, &buffer);
+
+	for (;;) {
+		lz_avail = src_size;
+		dst_size = sizeof(data);
+		lz_hint = LZ4F_decompress(dctx, data, &dst_size, src_data, &lz_avail, &options);
+
+		if (LZ4F_isError(lz_hint)) {
+			LZ4F_freeDecompressionContext(dctx);
+			return push_error(L, "LZ4F_decompress() failed: %s", LZ4F_getErrorName(lz_hint));
+		}
+		if (dst_size == 0) {
+			LZ4F_freeDecompressionContext(dctx);
+			return push_error(L, "LZ4F_decompress() returned no output");
+		}
+
+		luaL_addlstring(&buffer, data, dst_size);
+		src_data += lz_avail;
+		src_size -= lz_avail;
+
+		if (lz_hint == 0) break;
+	}
+
+	LZ4F_freeDecompressionContext(dctx);
+	luaL_pushresult(&buffer);
+	return 1;
+}
+
+
+/*----------------------------------------------------------------------------*/
+static const luaL_Reg nox_math__funcs[] = {
+	{ "xxhash", f_nox_math_xxhash },
+	{ "compress", f_nox_math_compress },
+	{ "decompress", f_nox_math_decompress },
+	{ NULL, NULL }
+};
+
+
+/*----------------------------------------------------------------------------*/
+static int open_module_nox_math(lua_State *L) {
+	luaL_newlib(L, nox_math__funcs);
+	return 1;
+}
+
+
+/*
+--------------------------------------------------------------------------------
+
 		Module: nox.system
 
 --------------------------------------------------------------------------------
@@ -978,6 +1089,9 @@ static int open_module_nox(lua_State *L) {
 
 	luaL_requiref(L, "nox.events", open_module_nox_events, 0);
 	lua_setfield(L, -2, "events");
+
+	luaL_requiref(L, "nox.math", open_module_nox_math, 0);
+	lua_setfield(L, -2, "math");
 
 	luaL_requiref(L, "nox.system", open_module_nox_system, 0);
 	lua_setfield(L, -2, "system");

@@ -119,6 +119,26 @@ Called when a button on a game controller was released.
 #### nox.events.on_controller_moved(id, axis, value)
 Called when a stick on a game controller was moved.
 
+### nox.math
+
+#### nox.math.xxhash(binary_string [, initial_seed])
+Calculates the XX32 hash of the given *binary_string*. If *initial_seed* is not given it will be 0.
+```lua
+local hash = nox.math.xxhash('Hello World!') -- calculate the XX32 hash
+```
+
+#### nox.math.compress(binary_string [, compression_level])
+Compresses the given *binary_string* using the LZ4 compression algorithm.
+```lua
+local compressed = nox.math.compress(original_string) -- compress the string
+```
+
+#### nox.math.decompress(lz4_binary_string)
+Decompress the given *lz4_binary_string* containing a valid LZ4 frame.
+```lua
+local decompressed = nox.math.decompress(lz4_binary_string) -- decompress the given LZ4 frame
+```
+
 ### nox.system
 
 #### nox.system.get_base_path()

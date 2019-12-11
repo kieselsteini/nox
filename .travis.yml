@@ -3,10 +3,10 @@ dist: bionic
 language: c
 
 compiler:
-	- gcc
-	- clang
+    - gcc
+    - clang
 
 install:
-	- apt-get install libsdl2-dev
+    - apt-get install libsdl2-dev
 
 script: make

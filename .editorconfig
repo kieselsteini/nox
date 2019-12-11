@@ -13,6 +13,10 @@ indent_size = 4
 [Makefile*]
 indent_style = tab
 
+# Space indentation
+[.travis.yml]
+indent_style = space
+
 # Windows-style newlines for LICENSES.txt
 [LICENSES.txt]
 end_of_line = crlf

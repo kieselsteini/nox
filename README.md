@@ -1,4 +1,5 @@
 # Nox - a minimal 2D Lua game engine
+![Travis Build Status](https://travis-ci.org/kieselsteini/nox.svg?branch=develop)
 
 ## API
 
